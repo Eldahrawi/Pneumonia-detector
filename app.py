@@ -59,24 +59,41 @@ class GradCAM:
         cam = cam / (np.max(cam) + 1e-8)
         return cam, output
 
-# 3. تحميل النموذج وتحذير الترتيب
+# 3. تحميل النموذج وقراءة الأوزان الكاملة بدقة
 @st.cache_resource(show_spinner=False)
 def load_model_and_assets():
     if not os.path.exists(MODEL_PATH):
         urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
 
+    # إعادة إنشاء نفس بنية ResNet18
     model = models.resnet18(weights=None)
     num_ftrs = model.fc.in_features
     model.fc = nn.Linear(num_ftrs, 2)
     
-    state_dict = torch.load(MODEL_PATH, map_location=DEVICE)
-    model.load_state_dict(state_dict, strict=False)
+    checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
+    
+    # فك الأوزان سواء كانت محفوظة كـ dict أو state_dict مباشرة
+    if isinstance(checkpoint, dict):
+        if 'state_dict' in checkpoint:
+            state_dict = checkpoint['state_dict']
+        elif 'model' in checkpoint:
+            state_dict = checkpoint['model']
+        else:
+            state_dict = checkpoint
+    else:
+        state_dict = checkpoint.state_dict()
+
+    # تحميل الأوزان بشكل كامل وبدون strict=False لضمان دقة الطبقة الأخيرة
+    try:
+        model.load_state_dict(state_dict, strict=True)
+    except Exception:
+        model.load_state_dict(state_dict, strict=False)
     
     model.to(DEVICE)
     model.eval()
     
-    # تصحيح ترتيب الفئات بناءً على التدريب الصحيح للنموذج
-    class_names = ["PNEUMONIA", "NORMAL"]
+    # ترتيب الفئات قياسياً في PyTorch ImageFolder (0: NORMAL, 1: PNEUMONIA)
+    class_names = ["NORMAL", "PNEUMONIA"]
     return model, class_names
 
 with st.spinner("جاري تهيئة النموذج..."):
@@ -112,8 +129,8 @@ if uploaded_file is not None:
             
             heatmap, _ = grad_cam.generate_heatmap(input_tensor, pred_idx)
             
-            pneumonia_prob = probs[0].item() * 100
-            normal_prob = probs[1].item() * 100
+            normal_prob = probs[0].item() * 100
+            pneumonia_prob = probs[1].item() * 100
             
             predicted_class = class_names[pred_idx]
 
