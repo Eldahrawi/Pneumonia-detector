@@ -59,7 +59,7 @@ class GradCAM:
         cam = cam / (np.max(cam) + 1e-8)
         return cam, output
 
-# 3. تحميل النموذج بالأوزان المطابقة تماماً
+# 3. تحميل النموذج وتحذير الترتيب
 @st.cache_resource(show_spinner=False)
 def load_model_and_assets():
     if not os.path.exists(MODEL_PATH):
@@ -75,8 +75,8 @@ def load_model_and_assets():
     model.to(DEVICE)
     model.eval()
     
-    # الترتيب الافتراضي لـ PyTorch ImageFolder
-    class_names = ["NORMAL", "PNEUMONIA"]
+    # تصحيح ترتيب الفئات بناءً على التدريب الصحيح للنموذج
+    class_names = ["PNEUMONIA", "NORMAL"]
     return model, class_names
 
 with st.spinner("جاري تهيئة النموذج..."):
@@ -87,14 +87,14 @@ with st.spinner("جاري تهيئة النموذج..."):
         st.error(f"حدث خطأ أثناء تحميل النموذج: {e}")
         st.stop()
 
-# 4. المعالجة السابقة لصورة الأشعة
+# 4. المعالجة السابقة للصورة
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
-# 5. واجهة المستخدم والتفاعل
+# 5. الواجهة والتشخيص
 uploaded_file = st.file_uploader("اختر صورة الأشعة (JPG / PNG):", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
@@ -112,8 +112,8 @@ if uploaded_file is not None:
             
             heatmap, _ = grad_cam.generate_heatmap(input_tensor, pred_idx)
             
-            normal_prob = probs[0].item() * 100
-            pneumonia_prob = probs[1].item() * 100
+            pneumonia_prob = probs[0].item() * 100
+            normal_prob = probs[1].item() * 100
             
             predicted_class = class_names[pred_idx]
 
