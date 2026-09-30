@@ -18,24 +18,29 @@ st.write("قم بتحميل صورة الأشعة السينية (X-Ray) للص�
 
 DEVICE = torch.device('cpu')
 MODEL_PATH = "pneumonia_resnet18.pth"
-# رابط الملف الذي قمت برفه على حسابك في Hugging Face
 MODEL_URL = "https://huggingface.co/eldhrawy/pneumonia-detector/resolve/main/pneumonia_resnet18.pth"
 
 @st.cache_resource
 def load_model_and_assets():
-    # 1. تنزيل الملف من Hugging Face إذا لم يكن موجوداً
+    # 1. تنزيل الملف إذا لم يكن موجوداً
     if not os.path.exists(MODEL_PATH):
         with st.spinner("جاري تحميل أوزان النموذج من Hugging Face..."):
             urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
 
-    # 2. بناء هيكل النموذج (ResNet18)
+    # 2. بناء ResNet18 وتعديل الطبقة الأخيرة
     model = models.resnet18(weights=None)
     num_ftrs = model.fc.in_features
     model.fc = nn.Linear(num_ftrs, 2)
     
-    # 3. تحميل الأوزان على الـ CPU
+    # 3. تحميل الأوزان مع تجاهل الطبقات غير المتطابقة تلقائياً (strict=False)
     state_dict = torch.load(MODEL_PATH, map_location=DEVICE)
-    model.load_state_dict(state_dict, strict=False)
+    
+    # التعامل مع أوزان ImageNet أو أوزان التدريب المخصص
+    model_dict = model.state_dict()
+    # تصفية الأوزان التي تتطابق في الحجم فقط
+    pretrained_dict = {k: v for k, v in state_dict.items() if k in model_dict and model_dict[k].shape == v.shape}
+    model_dict.update(pretrained_dict)
+    model.load_state_dict(model_dict)
     
     model.to(DEVICE)
     model.eval()
@@ -75,6 +80,6 @@ if uploaded_file is not None:
 
         st.subheader("نتيجة التحليل:")
         if predicted_class == "Pneumonia":
-            st.error(f"⚠️️ **النتيجة: احتمال وجود التهاب رئوي (Pneumonia)**\n\nنسبة التأكد: **{score:.2f}%**")
+            st.error(f"⚠️ **النتيجة: احتمال وجود التهاب رئوي (Pneumonia)**\n\nنسبة التأكد: **{score:.2f}%**")
         else:
             st.success(f"✅ **النتيجة: الأشعة سليمة (Normal)**\n\nنسبة التأكد: **{score:.2f}%**")
