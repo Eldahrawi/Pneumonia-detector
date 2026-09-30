@@ -8,6 +8,7 @@ from PIL import Image
 import numpy as np
 import cv2
 
+# 1. إعدادات الصفحة
 st.set_page_config(
     page_title="تشخيص التهاب الرئة بالذكاء الاصطناعي",
     page_icon="🏥",
@@ -15,12 +16,13 @@ st.set_page_config(
 )
 
 st.title("🏥 نظام الذكاء الاصطناعي الطبي لتشخيص التهاب الرئة")
-st.write("قم بتحميل صورة الأشعة السينية (X-Ray) للصدر للحصول على التقييم التشخيصي.")
+st.write("قم بتحميل صورة الأشعة السينية (X-Ray) للصدر للحصول على التقييم التشخيصي مع الخريطة الحرارية (Grad-CAM).")
 
 DEVICE = torch.device('cpu')
 MODEL_PATH = "pneumonia_resnet18.pth"
 MODEL_URL = "https://huggingface.co/eldhrawy/pneumonia-detector/resolve/main/pneumonia_resnet18.pth"
 
+# 2. كلاس Grad-CAM
 class GradCAM:
     def __init__(self, model, target_layer):
         self.model = model
@@ -59,35 +61,52 @@ class GradCAM:
         cam = cam / (np.max(cam) + 1e-8)
         return cam, class_idx, output
 
+# 3. بناء النموذج وتحميل الأوزان بدقة Colab الأصلية
 @st.cache_resource(show_spinner=False)
 def load_model_and_assets():
     if not os.path.exists(MODEL_PATH):
         urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
 
-    model = models.resnet18(weights=None)
+    # استخدام نفس طريقة بناء النموذج عند التدريب
+    model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
     num_ftrs = model.fc.in_features
     model.fc = nn.Linear(num_ftrs, 2)
     
-    state_dict = torch.load(MODEL_PATH, map_location=DEVICE)
+    # تحميل الأوزان المدربة مع مطابقة صارمة للطبقات
+    checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
+    
+    # التعامل مع الحالات التي يُحفظ فيها state_dict أو Model كامل
+    if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+        state_dict = checkpoint['state_dict']
+    elif isinstance(checkpoint, dict):
+        state_dict = checkpoint
+    else:
+        state_dict = checkpoint.state_dict()
+
     model.load_state_dict(state_dict, strict=False)
     
     model.to(DEVICE)
     model.eval()
-    return model, ["NORMAL", "PNEUMONIA"]
+    
+    class_names = ["NORMAL", "PNEUMONIA"]
+    return model, class_names
 
-try:
-    model, class_names = load_model_and_assets()
-    grad_cam = GradCAM(model, model.layer4)
-except Exception as e:
-    st.error(f"خطأ في التحميل: {e}")
-    st.stop()
+with st.spinner("جاري تهيئة النموذج وتحميل الأوزان التشخيصية..."):
+    try:
+        model, class_names = load_model_and_assets()
+        grad_cam = GradCAM(model, model.layer4)
+    except Exception as e:
+        st.error(f"حدث خطأ أثناء تحميل النموذج: {e}")
+        st.stop()
 
+# 4. المعالجة السابقة للصورة (Pre-processing)
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
+# 5. واجهة المستخدم
 uploaded_file = st.file_uploader("اختر صورة الأشعة (JPG / PNG):", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
@@ -95,7 +114,7 @@ if uploaded_file is not None:
     resized_orig = orig_img.resize((224, 224))
     
     if st.button("بدء التشخيص وتوليد الخريطة الحرارية", type="primary"):
-        with st.spinner("جاري التحليل..."):
+        with st.spinner("جاري تحليل الأشعة وتحديد مناطق الإصابة..."):
             input_tensor = transform(orig_img).unsqueeze(0).to(DEVICE)
             
             heatmap, pred_idx, output = grad_cam.generate_heatmap(input_tensor)
@@ -103,6 +122,7 @@ if uploaded_file is not None:
             score = probs[pred_idx].item() * 100
             predicted_class = class_names[pred_idx]
 
+            # دمج الخريطة الحرارية
             heatmap_uint8 = np.uint8(255 * heatmap)
             heatmap_colored = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
             heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
