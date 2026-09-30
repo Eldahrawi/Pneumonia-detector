@@ -22,7 +22,7 @@ DEVICE = torch.device('cpu')
 MODEL_PATH = "pneumonia_resnet18.pth"
 MODEL_URL = "https://huggingface.co/eldhrawy/pneumonia-detector/resolve/main/pneumonia_resnet18.pth"
 
-# 2. كلاس Grad-CAM لاستخراج الخريطة الحرارية
+# 2. كلاس Grad-CAM
 class GradCAM:
     def __init__(self, model, target_layer):
         self.model = model
@@ -61,33 +61,28 @@ class GradCAM:
         cam = cam / (np.max(cam) + 1e-8)
         return cam, class_idx, output
 
-# 3. تحميل النموذج والتأكد من توافقه
+# 3. تحميل النموذج بالأوزان الكاملة الصحيحة
 @st.cache_resource(show_spinner=False)
 def load_model_and_assets():
     if not os.path.exists(MODEL_PATH):
         urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
 
+    # بناء هيكل الموديل المطابق لـ Colab
     model = models.resnet18(weights=None)
     num_ftrs = model.fc.in_features
     model.fc = nn.Linear(num_ftrs, 2)
     
+    # تحميل حالة الموديل كاملة بدون استثناء أية طبقات
     state_dict = torch.load(MODEL_PATH, map_location=DEVICE)
-    model_dict = model.state_dict()
-    
-    pretrained_dict = {
-        k: v for k, v in state_dict.items() 
-        if k in model_dict and model_dict[k].shape == v.shape
-    }
-    model_dict.update(pretrained_dict)
-    model.load_state_dict(model_dict)
+    model.load_state_dict(state_dict, strict=True)
     
     model.to(DEVICE)
     model.eval()
     
-    class_names = ["Normal", "Pneumonia"]
+    class_names = ["NORMAL", "PNEUMONIA"]
     return model, class_names
 
-with st.spinner("جاري تهيئة النظام..."):
+with st.spinner("جاري تهيئة النظام وتحميل الأوزان..."):
     try:
         model, class_names = load_model_and_assets()
         grad_cam = GradCAM(model, model.layer4)
@@ -95,14 +90,14 @@ with st.spinner("جاري تهيئة النظام..."):
         st.error(f"حدث خطأ أثناء تحميل النموذج: {e}")
         st.stop()
 
-# 4. تحويلات الصورة
+# 4. التحويلات
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
-# 5. الواجهة والتفاعل
+# 5. الواجهة
 uploaded_file = st.file_uploader("اختر صورة الأشعة (JPG / PNG):", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
@@ -113,13 +108,11 @@ if uploaded_file is not None:
         with st.spinner("جاري تحليل الصورة وتوليد الخريطة الحرارية..."):
             input_tensor = transform(orig_img).unsqueeze(0).to(DEVICE)
             
-            # توليد Grad-CAM
             heatmap, pred_idx, output = grad_cam.generate_heatmap(input_tensor)
             probs = torch.nn.functional.softmax(output[0], dim=0)
             score = probs[pred_idx].item() * 100
             predicted_class = class_names[pred_idx]
 
-            # دمج الخريطة الحرارية مع الصورة الأصلية
             heatmap_uint8 = np.uint8(255 * heatmap)
             heatmap_colored = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
             heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
@@ -128,7 +121,7 @@ if uploaded_file is not None:
             overlay = cv2.addWeighted(resized_orig_np, 0.55, heatmap_colored, 0.45, 0)
 
         st.subheader("نتيجة التحليل:")
-        if predicted_class == "Pneumonia":
+        if predicted_class == "Pneumonia" or predicted_class == "PNEUMONIA":
             st.error(f"⚠️ **النتيجة: احتمال وجود التهاب رئوي (Pneumonia)**\n\nنسبة التأكد: **{score:.2f}%**")
         else:
             st.success(f"✅ **النتيجة: الأشعة سليمة (Normal)**\n\nنسبة التأكد: **{score:.2f}%**")
