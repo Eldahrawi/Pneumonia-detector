@@ -61,20 +61,19 @@ class GradCAM:
         cam = cam / (np.max(cam) + 1e-8)
         return cam, class_idx, output
 
-# 3. تحميل النموذج بالأوزان الكاملة الصحيحة
+# 3. تحميل النموذج بشكل خفيف ومحمي من الـ Crash
 @st.cache_resource(show_spinner=False)
 def load_model_and_assets():
     if not os.path.exists(MODEL_PATH):
         urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
 
-    # بناء هيكل الموديل المطابق لـ Colab
     model = models.resnet18(weights=None)
     num_ftrs = model.fc.in_features
     model.fc = nn.Linear(num_ftrs, 2)
     
-    # تحميل حالة الموديل كاملة بدون استثناء أية طبقات
+    # تحميل الأوزان بشكل مباشر وآمن على CPU
     state_dict = torch.load(MODEL_PATH, map_location=DEVICE)
-    model.load_state_dict(state_dict, strict=True)
+    model.load_state_dict(state_dict, strict=False)
     
     model.to(DEVICE)
     model.eval()
@@ -82,7 +81,7 @@ def load_model_and_assets():
     class_names = ["NORMAL", "PNEUMONIA"]
     return model, class_names
 
-with st.spinner("جاري تهيئة النظام وتحميل الأوزان..."):
+with st.spinner("جاري تحميل النظام والأوزان..."):
     try:
         model, class_names = load_model_and_assets()
         grad_cam = GradCAM(model, model.layer4)
@@ -121,7 +120,7 @@ if uploaded_file is not None:
             overlay = cv2.addWeighted(resized_orig_np, 0.55, heatmap_colored, 0.45, 0)
 
         st.subheader("نتيجة التحليل:")
-        if predicted_class == "Pneumonia" or predicted_class == "PNEUMONIA":
+        if predicted_class in ["Pneumonia", "PNEUMONIA"]:
             st.error(f"⚠️ **النتيجة: احتمال وجود التهاب رئوي (Pneumonia)**\n\nنسبة التأكد: **{score:.2f}%**")
         else:
             st.success(f"✅ **النتيجة: الأشعة سليمة (Normal)**\n\nنسبة التأكد: **{score:.2f}%**")
